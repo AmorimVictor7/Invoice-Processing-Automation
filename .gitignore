@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.local
+.vscode/
+__pycache__/
+
+# Next.js
+.next/
+
+# Python
+*.pyc
+
+# arquivos gerados
+backend/invoice_sessions/
