@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import clsx from "clsx";
 import type { InvoiceData } from "@/lib/types";
 
@@ -42,6 +43,7 @@ function ConfidenceDot({ score }: { score: number | undefined }) {
 // Renderiza textarea, select ou input de acordo com o prop "type".
 // Aplica classes CSS de erro quando campo obrigatório está vazio ou quando a confiança é baixa.
 function Field({ label, field, invoice, onChange, type = "text", options, required, hint }: FieldProps) {
+  const [focused, setFocused] = useState(false);
   const value = invoice[field] ?? "";
   const confidence = invoice.confidence[field as string];
   const isEmpty = value === "" || value === null || value === undefined;
@@ -86,8 +88,17 @@ function Field({ label, field, invoice, onChange, type = "text", options, requir
       ) : (
         <input
           type={type}
-          // Para campos numéricos, converte para string para o input mas mantém null quando vazio
-          value={type === "number" ? (value === "" ? "" : String(value)) : (value as string)}
+          value={
+            type === "number"
+              ? value === "" || value === null || value === undefined
+                ? ""
+                : focused
+                  ? String(value)
+                  : (value as number).toFixed(2)
+              : (value as string)
+          }
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onChange={(e) =>
             onChange(
               field,
@@ -98,8 +109,8 @@ function Field({ label, field, invoice, onChange, type = "text", options, requir
           }
           className={inputClass}
           placeholder={hint}
-          step={type === "number" ? "0.01" : undefined} // 2 casas decimais para valores monetários
-          min={type === "number" ? "0" : undefined}     // valores negativos não fazem sentido para NF
+          step={type === "number" ? "0.01" : undefined}
+          min={type === "number" ? "0" : undefined}
         />
       )}
 
