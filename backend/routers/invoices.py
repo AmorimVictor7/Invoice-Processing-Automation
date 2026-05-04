@@ -22,7 +22,7 @@ from models.invoice import ConfirmRequest, ConfirmResponse, InvoiceData, UploadR
 from services.excel_service import generate_excel
 from services.extractor_service import extract_all
 from services.file_service import create_zip, organize_invoices
-from services.ocr_service import extract_text
+from services.ocr_service import extract_invoice_data
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,8 +89,15 @@ async def upload_invoices(files: List[UploadFile] = File(...)):
         # Executa OCR + extração de campos, medindo o tempo de processamento
         t0 = time.time()
         try:
+<<<<<<< HEAD
             text, method = extract_text(content, upload.filename)  # → texto bruto + método usado
             extracted = extract_all(text)                          # → campos estruturados + scores de confiança
+=======
+            # Gemini retorna text + campos já estruturados (preextracted != None)
+            # Demais provedores retornam apenas text e usam extractor_service para parsing
+            text, method, preextracted = extract_invoice_data(content, upload.filename)
+            extracted = preextracted or extract_all(text)
+>>>>>>> fa255ae (add gemini 3 flash preview as ocr extractor)
         except Exception as e:
             logger.exception("OCR failed for %s", upload.filename)
             errors.append(f"{upload.filename}: falha no OCR — {e}")

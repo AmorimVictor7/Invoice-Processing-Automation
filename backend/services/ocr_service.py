@@ -2,13 +2,14 @@
 # Suporta três provedores configuráveis via variável OCR_PROVIDER:
 #   - "tesseract" (padrão): local, gratuito, sem necessidade de API
 #   - "google": Google Cloud Vision API, melhor qualidade em documentos complexos
+#   - "gemini": Google Gemini API, extração OCR + campos estruturados em uma única chamada
 # Para PDFs, tenta extrair texto nativo primeiro (pdfplumber) antes de usar OCR nas imagens,
 # pois texto nativo é mais rápido e preciso que OCR.
 
 import io
 import os
 import logging
-from typing import Tuple
+from typing import Optional, Tuple
 from PIL import Image, ImageFilter, ImageEnhance
 from dotenv import load_dotenv
 
@@ -19,7 +20,8 @@ logger = logging.getLogger(__name__)
 # Configurações lidas do .env — permitem trocar o provedor sem alterar código
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")           # caminho do executável tesseract (Windows)
 GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY", "")
-OCR_PROVIDER = os.getenv("OCR_PROVIDER", "tesseract")    # "tesseract" ou "google"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OCR_PROVIDER = os.getenv("OCR_PROVIDER", "tesseract")    # "tesseract", "google" ou "gemini"
 
 # Configura o caminho do executável Tesseract se fornecido (necessário no Windows)
 if TESSERACT_CMD:
@@ -107,6 +109,27 @@ def _google_vision_image(content: bytes) -> Tuple[str, str]:
     except Exception as e:
         logger.warning("Google Vision failed: %s", e)
     return "", "error"
+
+
+def extract_invoice_data(file_content: bytes, filename: str) -> Tuple[str, str, Optional[dict]]:
+    """
+    Wrapper principal do serviço de OCR. Retorna (text, method, preextracted_or_None).
+
+    Quando OCR_PROVIDER=gemini, chama o Gemini diretamente e retorna campos estruturados
+    já prontos em preextracted ({"data": {...}, "confidence": {...}}), evitando a etapa
+    de extração por regex do extractor_service.
+
+    Para os demais provedores, retorna preextracted=None e o router utiliza o extractor_service.
+    Erros do Gemini propagam para o router (aparecem como erro no frontend) em vez de
+    silenciosamente cair no Tesseract com resultados ruins.
+    """
+    if OCR_PROVIDER == "gemini":
+        from .gemini_service import extract_invoice_with_gemini
+        raw_text, fields, confidence = extract_invoice_with_gemini(file_content, filename)
+        return raw_text, "gemini", {"data": fields, "confidence": confidence}
+
+    text, method = extract_text(file_content, filename)
+    return text, method, None
 
 
 def extract_text(file_content: bytes, filename: str) -> Tuple[str, str]:
