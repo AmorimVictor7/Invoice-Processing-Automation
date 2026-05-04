@@ -9,6 +9,7 @@ __pycache__/
 
 # Python
 *.pyc
+venv/
 
 # arquivos gerados
 backend/invoice_sessions/

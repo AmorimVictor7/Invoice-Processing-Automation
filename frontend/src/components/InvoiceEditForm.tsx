@@ -3,6 +3,7 @@
 import { useState } from "react";
 import clsx from "clsx";
 import type { InvoiceData } from "@/lib/types";
+import { CurrencyInput } from "@/components/CurrencyInput";
 
 // Moedas disponíveis no seletor de moeda
 const CURRENCIES = ["USD", "EUR", "GBP", "BRL", "CAD", "AUD", "JPY", "CHF", "ARS", "MXN"];
@@ -14,10 +15,11 @@ interface FieldProps {
   field: keyof InvoiceData;                                   // nome do campo no objeto InvoiceData
   invoice: InvoiceData;
   onChange: (field: keyof InvoiceData, value: string | number | null) => void;
-  type?: "text" | "number" | "date" | "textarea" | "select"; // tipo de input a renderizar
+  type?: "text" | "number" | "date" | "textarea" | "select" | "currency"; // tipo de input a renderizar
   options?: string[];   // opções para o select
   required?: boolean;   // exibe asterisco e mensagem de erro se vazio
   hint?: string;        // placeholder do input
+  readOnly?: boolean;   // exibe valor sem permitir edição
 }
 
 
@@ -42,7 +44,7 @@ function ConfidenceDot({ score }: { score: number | undefined }) {
 // Componente genérico de campo do formulário.
 // Renderiza textarea, select ou input de acordo com o prop "type".
 // Aplica classes CSS de erro quando campo obrigatório está vazio ou quando a confiança é baixa.
-function Field({ label, field, invoice, onChange, type = "text", options, required, hint }: FieldProps) {
+function Field({ label, field, invoice, onChange, type = "text", options, required, hint, readOnly }: FieldProps) {
   const [focused, setFocused] = useState(false);
   const value = invoice[field] ?? "";
   const confidence = invoice.confidence[field as string];
@@ -53,8 +55,9 @@ function Field({ label, field, invoice, onChange, type = "text", options, requir
   // Combina classes base do input com classes de estado (erro / baixa confiança)
   const inputClass = clsx(
     "field-input",
-    isMissingRequired && "missing-required",              // borda vermelha
-    isLowConf && !isMissingRequired && "low-confidence"   // borda amarela
+    readOnly && "field-readonly",                         // fundo cinza, sem interação
+    !readOnly && isMissingRequired && "missing-required", // borda vermelha
+    !readOnly && isLowConf && !isMissingRequired && "low-confidence" // borda amarela
   );
 
   return (
@@ -85,6 +88,14 @@ function Field({ label, field, invoice, onChange, type = "text", options, requir
             <option key={o} value={o}>{o}</option>
           ))}
         </select>
+      ) : type === "currency" ? (
+        <CurrencyInput
+          value={value as number | null}
+          onChange={(v) => onChange(field, v)}
+          className={inputClass}
+          placeholder={hint}
+          readOnly={readOnly}
+        />
       ) : (
         <input
           type={type}
@@ -136,14 +147,15 @@ export default function InvoiceEditForm({ invoice, onChange }: Props) {
   // total_amount ou exchange_rate mudam — evita que o usuário precise calcular manualmente
   const set = (field: keyof InvoiceData, value: string | number | null) => {
     const updated = { ...invoice, [field]: value };
-    if (
-      (field === "total_amount" || field === "exchange_rate") &&
-      updated.total_amount != null &&
-      updated.exchange_rate != null
-    ) {
-      updated.converted_amount = parseFloat(
-        (updated.total_amount * updated.exchange_rate).toFixed(2)
-      );
+    if (field === "total_amount" || field === "exchange_rate") {
+      if (updated.total_amount != null && updated.exchange_rate != null) {
+        updated.converted_amount = parseFloat(
+          (updated.total_amount * updated.exchange_rate).toFixed(2)
+        );
+      } else {
+        // Se um dos operandos for apagado, limpa o resultado para não exibir valor desatualizado
+        updated.converted_amount = null;
+      }
     }
     onChange(updated);
   };
@@ -162,11 +174,11 @@ export default function InvoiceEditForm({ invoice, onChange }: Props) {
 
       {/* Campos opcionais */}
       <Field label="Subtotal" field="subtotal" invoice={invoice} onChange={set} type="number" hint="Opcional" />
-      <Field label="Impostos / Taxas" field="taxes" invoice={invoice} onChange={set} type="number" hint="Opcional" />
+      <Field label="Impostos / Taxas" field="taxes" invoice={invoice} onChange={set} type="currency" />
       {/* Alterar cotação ou valor total recalcula converted_amount automaticamente (ver função set acima) */}
-      <Field label="Cotação (R$)" field="exchange_rate" invoice={invoice} onChange={set} type="number" hint="Ex: 5.70" />
+      <Field label="Cotação (R$)" field="exchange_rate" invoice={invoice} onChange={set} type="currency" />
 
-      <Field label="Valor Convertido (R$)" field="converted_amount" invoice={invoice} onChange={set} type="number" hint="Calculado automaticamente" />
+      <Field label="Valor Convertido (R$)" field="converted_amount" invoice={invoice} onChange={set} type="currency" readOnly />
       <Field label="Centro de Custo" field="cost_center" invoice={invoice} onChange={set} hint="Ex: TI / Marketing" />
 
       {/* Campos de texto longo ocupam toda a largura do grid */}

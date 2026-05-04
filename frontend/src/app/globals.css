@@ -39,6 +39,13 @@
     @apply border-red-500 bg-red-900/20;
   }
 
+  .field-input.field-readonly {
+    @apply bg-gray-50 text-gray-500 cursor-default select-none focus:ring-0 focus:border-gray-200;
+  }
+  .dark .field-input.field-readonly {
+    @apply bg-gray-800 text-gray-400 border-gray-700;
+  }
+
   .btn-primary {
     @apply inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5
            text-sm font-semibold text-white shadow-sm hover:bg-blue-700
