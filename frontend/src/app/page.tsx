@@ -125,18 +125,36 @@ export default function HomePage() {
         )}
 
         {/* Lista de arquivos que falharam individualmente no OCR (não impede os demais) */}
-        {errors.length > 0 && (
-          <div className="rounded-xl bg-orange-50 border border-orange-200 px-4 py-3 dark:bg-orange-900/20 dark:border-orange-700">
-            <p className="text-sm font-semibold text-orange-700 mb-1 dark:text-orange-400">
-              Alguns arquivos não puderam ser processados:
-            </p>
-            <ul className="list-disc list-inside space-y-0.5">
-              {errors.map((err, i) => (
-                <li key={i} className="text-xs text-orange-600 dark:text-orange-400">{err}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {errors.length > 0 && (() => {
+          const quotaErrors = errors.filter(e => e.includes("Cota diária"));
+          const otherErrors = errors.filter(e => !e.includes("Cota diária"));
+          return (
+            <>
+              {quotaErrors.length > 0 && (
+                <div className="rounded-xl bg-orange-50 border border-orange-200 px-4 py-3 dark:bg-orange-900/20 dark:border-orange-700">
+                  <p className="text-sm font-semibold text-orange-700 mb-1 dark:text-orange-400">
+                    Cota diária da API Gemini esgotada
+                  </p>
+                  <p className="text-xs text-orange-600 dark:text-orange-400">
+                    Os arquivos não foram processados — tente novamente amanhã ou faça upgrade do plano.
+                  </p>
+                </div>
+              )}
+              {otherErrors.length > 0 && (
+                <div className="rounded-xl bg-orange-50 border border-orange-200 px-4 py-3 dark:bg-orange-900/20 dark:border-orange-700">
+                  <p className="text-sm font-semibold text-orange-700 mb-1 dark:text-orange-400">
+                    Alguns arquivos não puderam ser processados:
+                  </p>
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {otherErrors.map((err, i) => (
+                      <li key={i} className="text-xs text-orange-600 dark:text-orange-400">{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* Estado idle: exibe a área de upload */}
         {appState === "idle" && (
