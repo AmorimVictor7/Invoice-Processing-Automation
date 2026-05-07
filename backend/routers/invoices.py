@@ -49,11 +49,25 @@ def _session_dir(session_id: str) -> Path:
 
 # ─── POST /upload ──────────────────────────────────────────────────────────────
 
-@router.post("/upload", response_model=UploadResponse)
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    responses={
+        200: {"description": "Processamento concluído. Arquivos inválidos são relatados em `processing_errors`; NFs válidas retornam em `invoices`."},
+        400: {"description": "Nenhum arquivo enviado na requisição."},
+    },
+)
 async def upload_invoices(files: List[UploadFile] = File(...)):
     """
     Recebe um ou mais arquivos (PDF/imagem), processa cada um com OCR e extração de campos,
-    e devolve as NFs estruturadas junto com uma session_id para uso posterior no /confirm.
+    e devolve as NFs estruturadas junto com uma `session_id` para uso posterior no `/confirm`.
+
+    **Cenários testados**
+
+    | Cenário | Status | Teste |
+    |---|---|---|
+    | Upload bem-sucedido com PDF válido | `200` | `test_upload_sucesso` |
+    | Arquivo com formato não suportado (ex: `.txt`) | `200` (erro em `processing_errors`) | `test_upload_formato_nao_suportado` |
     """
     if not files:
         raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
@@ -95,7 +109,12 @@ async def upload_invoices(files: List[UploadFile] = File(...)):
             extracted = preextracted or extract_all(text)
         except Exception as e:
             logger.exception("OCR failed for %s", upload.filename)
-            errors.append(f"{upload.filename}: falha no OCR — {e}")
+            err_str = str(e)
+            if "429" in err_str or "quota" in err_str.lower():
+                msg = "Cota diária da API Gemini esgotada. Tente novamente amanhã ou faça upgrade do plano."
+            else:
+                msg = f"falha no OCR — {e}"
+            errors.append(f"{upload.filename}: {msg}")
             continue
         elapsed = time.time() - t0
 
@@ -142,11 +161,31 @@ async def upload_invoices(files: List[UploadFile] = File(...)):
 
 # ─── POST /confirm ─────────────────────────────────────────────────────────────
 
-@router.post("/confirm", response_model=ConfirmResponse)
+@router.post(
+    "/confirm",
+    response_model=ConfirmResponse,
+    responses={
+        200: {"description": "Pacote gerado com sucesso. Retorna `job_id` e `download_url`."},
+        400: {"description": "Todas as NFs foram marcadas como ignoradas (`skipped`)."},
+        404: {"description": "Sessão não encontrada ou expirada (servidor reiniciado)."},
+        422: {"description": "NF confirmada com campo obrigatório ausente (supplier, invoice_number, issue_date, total_amount, currency)."},
+        500: {"description": "Falha interna ao gerar o Excel ou o ZIP."},
+    },
+)
 async def confirm_invoices(body: ConfirmRequest):
     """
-    Recebe a lista de NFs revisadas pelo usuário (com status confirmed/skipped e eventuais edições),
+    Recebe a lista de NFs revisadas pelo usuário (com status `confirmed`/`skipped` e eventuais edições),
     filtra as NFs confirmadas, gera o Excel e o ZIP e salva o lote no histórico.
+
+    **Cenários testados**
+
+    | Cenário | Status | Teste |
+    |---|---|---|
+    | Fluxo completo upload → confirm → download | `200` | `test_fluxo_completo` |
+    | Confirmação popula o histórico corretamente | `200` | `test_fluxo_completo_popula_historico` |
+    | Sessão inexistente ou expirada | `404` | `test_confirm_sessao_nao_encontrada` |
+    | Todas as NFs marcadas como ignoradas | `400` | `test_confirm_todas_ignoradas` |
+    | Campo obrigatório ausente (ex: `supplier = null`) | `422` | `test_confirm_campo_obrigatorio_ausente` |
     """
     # Verifica se a sessão ainda existe em memória (pode ter expirado se o servidor reiniciou)
     session = _sessions.get(body.session_id)
@@ -233,11 +272,24 @@ async def confirm_invoices(body: ConfirmRequest):
 
 # ─── GET /download/{job_id} ────────────────────────────────────────────────────
 
-@router.get("/download/{job_id}")
+@router.get(
+    "/download/{job_id}",
+    responses={
+        200: {"description": "Arquivo ZIP transmitido em streaming (`application/zip`)."},
+        404: {"description": "Job ID não encontrado ou arquivo ZIP ausente no disco."},
+    },
+)
 async def download_package(job_id: str):
     """
     Devolve o arquivo ZIP gerado como download.
-    Busca a sessão pelo job_id e serve o arquivo do sistema de arquivos temporário.
+    Busca a sessão pelo `job_id` e serve o arquivo do sistema de arquivos temporário.
+
+    **Cenários testados**
+
+    | Cenário | Status | Teste |
+    |---|---|---|
+    | Download do pacote após fluxo completo | `200` (content-type: `application/zip`) | `test_fluxo_completo` |
+    | Job ID inexistente | `404` | `test_download_nao_encontrado` |
     """
     # Procura qual sessão gerou esse job_id (busca linear no dict em memória)
     session = next(

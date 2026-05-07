@@ -64,6 +64,20 @@ app.include_router(history.router, prefix="/api/history", tags=["History"])
 
 
 # Endpoint de health check — usado por load balancers e monitoramento para verificar se o servidor está de pé
-@app.get("/health")
+@app.get(
+    "/health",
+    responses={
+        200: {"description": "Servidor operacional."},
+    },
+)
 def health():
+    """
+    Verifica se o servidor está rodando. Usado por load balancers e monitoramento.
+
+    **Cenários testados**
+
+    | Cenário | Status | Teste |
+    |---|---|---|
+    | Servidor no ar | `200` (`{"status": "ok"}`) | `test_health_ok` |
+    """
     return {"status": "ok"}

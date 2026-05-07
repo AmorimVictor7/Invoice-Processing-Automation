@@ -1,0 +1,371 @@
+import os
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+
+_REPORT_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --surface2:  #22263a;
+  --border:    #2e3450;
+  --text:      #e2e8f0;
+  --text-muted:#8892b0;
+  --accent:    #7c3aed;
+  --passed:    #22c55e;
+  --failed:    #ef4444;
+  --skipped:   #f59e0b;
+  --error:     #ef4444;
+  --radius:    10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  min-width: 0;
+  padding: 32px 40px;
+  line-height: 1.6;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1#title {
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 4px;
+  letter-spacing: -0.5px;
+}
+
+body > p:first-of-type {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 28px;
+}
+
+h2 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+p { color: var(--text); }
+
+#environment-header { margin-bottom: 0; }
+
+#environment {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+
+#environment td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: top;
+  font-size: 13px;
+}
+
+#environment tr:last-child td { border-bottom: none; }
+#environment tr:nth-child(odd) { background: var(--surface2); }
+
+#environment ul {
+  margin: 0;
+  padding: 0 18px;
+  color: var(--text-muted);
+}
+
+.summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.summary__data { flex: unset; width: 100%; }
+.summary__spacer { display: none; }
+
+.run-count {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 16px;
+}
+
+.filter { color: var(--text-muted); font-size: 12px; margin-bottom: 14px; }
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filters input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.filters span {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: var(--surface2);
+}
+
+.collapse { gap: 6px; }
+
+.collapse button,
+.filters button {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .15s;
+}
+
+.collapse button:hover,
+.filters button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+span.passed, .passed .col-result { color: var(--passed); }
+span.failed, .failed .col-result { color: var(--failed); }
+span.skipped, span.xfailed, span.rerun,
+.skipped .col-result, .xfailed .col-result, .rerun .col-result { color: var(--skipped); }
+span.error, span.xpassed,
+.error .col-result, .xpassed .col-result { color: var(--error); }
+
+#results-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text);
+}
+
+#results-table th,
+#results-table td {
+  padding: 11px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+#results-table thead th {
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+#results-table tbody tr:last-child td { border-bottom: none; }
+#results-table tbody tr.collapsible:hover td { background: var(--surface2); cursor: pointer; }
+
+tbody.passed .col-result { color: var(--passed); font-weight: 600; }
+tbody.failed .col-result { color: var(--failed); font-weight: 600; }
+
+.col-duration {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.col-testId { font-family: 'Courier New', monospace; font-size: 12px; color: var(--text-muted); }
+
+.sortable { cursor: pointer; user-select: none; }
+
+.sortable.desc::after,
+.sortable.asc::after {
+  content: '';
+  display: inline-block;
+  margin-left: 6px;
+  border: 5px solid transparent;
+  position: relative;
+  bottom: 0;
+}
+
+.sortable.desc::after { border-top-color: var(--accent); top: 3px; }
+.sortable.asc::after  { border-bottom-color: var(--accent); top: -3px; }
+
+.logwrapper {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 8px 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.logwrapper.expanded { max-height: none; }
+
+.logwrapper .log {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #a8b2c3;
+  padding: 14px 16px;
+  white-space: pre-wrap;
+  top: 0;
+  height: auto;
+}
+
+.logwrapper .logexpander {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  margin: 8px 12px;
+  cursor: pointer;
+  width: max-content;
+  position: sticky;
+  top: 8px;
+  z-index: 1;
+}
+
+.logwrapper .logexpander:hover { color: var(--text); border-color: var(--accent); }
+
+.summary__reload__button {
+  background: var(--accent);
+  border-radius: var(--radius);
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 20px;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  transition: background .15s;
+}
+
+.summary__reload__button:hover { background: #6d28d9; }
+
+.hidden { display: none !important; }
+
+.collapsible td:not(.col-links):hover::after { color: var(--text-muted); font-style: italic; }
+.col-result:hover::after { content: " (ocultar detalhes)"; }
+.col-result.collapsed:hover::after { content: " (mostrar detalhes)"; }
+
+#environment-header h2:hover::after,
+#environment-header.collapsed h2:hover::after {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 11px;
+  cursor: pointer;
+}
+"""
+
+_CSS_PATH = os.path.join(os.path.dirname(__file__), "_theme.css")
+
+
+def pytest_configure(config):
+    if not hasattr(config.option, "css"):
+        return
+    with open(_CSS_PATH, "w", encoding="utf-8") as f:
+        f.write(_REPORT_CSS)
+    if _CSS_PATH not in config.option.css:
+        config.option.css.append(_CSS_PATH)
+
+# PDF mínimo válido usado como fixture nos testes de upload
+MINIMAL_PDF = (
+    b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj "
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
+    b"3 0 obj<</Type/Page/MediaBox[0 0 3 3]>>endobj\n"
+    b"xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n"
+    b"0000000058 00000 n\n0000000115 00000 n\n"
+    b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF"
+)
+
+# Resultado falso de OCR — evita chamadas reais à API Gemini/Tesseract nos testes
+FAKE_OCR_RESULT = (
+    "Invoice text content",
+    "tesseract",
+    {
+        "data": {
+            "supplier": "ACME Corp",
+            "invoice_number": "INV-2024-001",
+            "issue_date": "2024-01-15",
+            "billing_period": "January 2024",
+            "description": "Software services",
+            "currency": "USD",
+            "subtotal": 1000.0,
+            "taxes": 0.0,
+            "total_amount": 1000.0,
+        },
+        "confidence": {
+            "supplier": 0.95,
+            "invoice_number": 0.90,
+            "total_amount": 0.92,
+        },
+    },
+)
+
+
+@pytest.fixture
+def minimal_pdf():
+    return MINIMAL_PDF
+
+
+@pytest.fixture
+def fake_ocr():
+    return FAKE_OCR_RESULT
+
+
+@pytest_asyncio.fixture
+async def client(tmp_path, monkeypatch):
+    """
+    Cliente HTTP para testes.
+    - Usa banco SQLite temporário isolado por teste (não toca no invoice_history.db real).
+    - Reseta o dicionário de sessões em memória antes de cada teste.
+    - Chama init_db() explicitamente porque ASGITransport não dispara o lifespan do FastAPI.
+    """
+    import db.database as db_module
+    import routers.invoices as invoices_module
+    from db.database import init_db
+
+    monkeypatch.setattr(db_module, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(invoices_module, "_sessions", {})
+
+    await init_db()
+
+    from main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
