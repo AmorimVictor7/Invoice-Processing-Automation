@@ -2,6 +2,24 @@
 // Espelham exatamente os modelos Pydantic do backend (backend/models/invoice.py).
 
 
+// ── Autenticação ──────────────────────────────────────────────────────────────
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: "user" | "admin";
+  last_login?: string | null;
+  created_at?: string;
+}
+
+export interface AuthResponse {
+  user: User;
+}
+
+
+// ── Invoice ───────────────────────────────────────────────────────────────────
+
 // Representa uma nota fiscal — estrutura central da aplicação.
 // null indica campo não extraído pelo OCR ou não preenchido pelo usuário.
 export interface InvoiceData {
@@ -28,7 +46,7 @@ export interface InvoiceData {
 
   // Metadados de processamento
   confidence: Record<string, number>; // campo → score de confiança (0.0–1.0)
-  ocr_method: string | null;          // "pdfplumber" | "tesseract" | "google_vision"
+  ocr_method: string | null;          // "pdfplumber" | "tesseract" | "google_vision" | "gemini"
   processing_time: number | null;     // segundos
 
   // Estado de revisão pelo usuário
@@ -37,6 +55,8 @@ export interface InvoiceData {
   duplicate_of: string | null;       // ID da NF original, se duplicata
 }
 
+
+// ── API Responses ─────────────────────────────────────────────────────────────
 
 // Resposta do POST /api/invoices/upload
 export interface UploadResponse {

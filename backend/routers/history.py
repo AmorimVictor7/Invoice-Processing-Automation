@@ -1,76 +1,61 @@
-# Roteador de histórico — expõe endpoints para listar e excluir registros de processamentos anteriores.
-# Prefixo /api/history registrado em main.py.
+"""
+Roteador de histórico — lista e exclui registros de processamentos anteriores.
+Todos os endpoints exigem autenticação; cada usuário acessa apenas seu próprio histórico.
+"""
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from fastapi import APIRouter, HTTPException, Query
-from db.database import delete_all_history, delete_history_entry, get_history
+from db.database import delete_all_history, delete_history_entry, get_history, log_action
+from deps.auth import get_current_user
+from limiter import limiter
 
 router = APIRouter()
 
 
-@router.get(
-    "/",
-    responses={
-        200: {"description": "Lista paginada de lotes processados, ordenada do mais recente para o mais antigo."},
-    },
-)
+@router.get("/")
+@limiter.limit("60/minute")
 async def list_history(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Retorna uma página de registros ordenados do mais recente para o mais antigo.
-    `limit` e `offset` permitem paginação (mínimo 1, máximo 200 por página).
-
-    **Cenários testados**
-
-    | Cenário | Status | Teste |
-    |---|---|---|
-    | Histórico vazio | `200` (`entries: []`, `total: 0`) | `test_list_history_empty` |
-    | Histórico após fluxo completo | `200` (entrada com dados do lote confirmado) | `test_fluxo_completo_popula_historico` |
-    """
-    entries = await get_history(limit=limit, offset=offset)
-    # Retorna total como len(entries) — útil para o frontend saber se há mais páginas
+    """Retorna histórico paginado do usuário autenticado, do mais recente para o mais antigo."""
+    entries = await get_history(limit=limit, offset=offset, user_id=current_user["id"])
     return {"entries": entries, "total": len(entries)}
 
 
-@router.delete(
-    "/all",
-    responses={
-        200: {"description": "Histórico limpo. Retorna `deleted` com a quantidade de registros removidos."},
-    },
-)
-async def clear_history():
-    """
-    Apaga **todos** os registros do histórico. Ação irreversível.
-
-    **Cenários testados**
-
-    | Cenário | Status | Teste |
-    |---|---|---|
-    | Limpar histórico vazio | `200` (`deleted: 0`) | `test_delete_all_empty` |
-    """
-    deleted = await delete_all_history()
+@router.delete("/all")
+@limiter.limit("5/minute")
+async def clear_history(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove todos os registros do usuário autenticado. Ação irreversível."""
+    deleted = await delete_all_history(user_id=current_user["id"])
+    await log_action(
+        "delete_all_history",
+        user_id=current_user["id"],
+        entity_type="history",
+        details={"deleted_count": deleted},
+    )
     return {"deleted": deleted}
 
 
-@router.delete(
-    "/{entry_id}",
-    responses={
-        200: {"description": "Registro removido. Retorna o `deleted` com o ID excluído."},
-        404: {"description": "Registro não encontrado no banco."},
-    },
-)
-async def remove_history_entry(entry_id: str):
-    """
-    Apaga um único registro pelo seu ID.
-
-    **Cenários testados**
-
-    | Cenário | Status | Teste |
-    |---|---|---|
-    | ID inexistente | `404` | `test_delete_entry_not_found` |
-    """
-    found = await delete_history_entry(entry_id)
+@router.delete("/{entry_id}")
+@limiter.limit("30/minute")
+async def remove_history_entry(
+    request: Request,
+    entry_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove um único registro do histórico. Garante que pertence ao usuário autenticado."""
+    found = await delete_history_entry(entry_id, user_id=current_user["id"])
     if not found:
         raise HTTPException(status_code=404, detail="Registro não encontrado.")
+    await log_action(
+        "delete_history_entry",
+        user_id=current_user["id"],
+        entity_type="history",
+        entity_id=entry_id,
+    )
     return {"deleted": entry_id}

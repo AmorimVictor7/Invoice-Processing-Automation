@@ -124,9 +124,13 @@ def extract_invoice_data(file_content: bytes, filename: str) -> Tuple[str, str, 
     silenciosamente cair no Tesseract com resultados ruins.
     """
     if OCR_PROVIDER == "gemini":
-        from .gemini_service import extract_invoice_with_gemini
-        raw_text, fields, confidence = extract_invoice_with_gemini(file_content, filename)
-        return raw_text, "gemini", {"data": fields, "confidence": confidence}
+        from .gemini_service import GeminiCircuitOpenError, extract_invoice_with_gemini
+        try:
+            raw_text, fields, confidence = extract_invoice_with_gemini(file_content, filename)
+            return raw_text, "gemini", {"data": fields, "confidence": confidence}
+        except GeminiCircuitOpenError as exc:
+            logger.warning("%s — usando fallback Tesseract/pdfplumber", exc)
+            # Fallback para extração local quando Gemini está indisponível
 
     text, method = extract_text(file_content, filename)
     return text, method, None

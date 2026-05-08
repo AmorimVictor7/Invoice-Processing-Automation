@@ -1,75 +1,156 @@
-// Camada de comunicação com a API do backend.
-// Todas as funções são assíncronas e lançam Error com a mensagem do backend em caso de falha.
-// BASE é lida da variável de ambiente NEXT_PUBLIC_API_URL — permite trocar a URL sem alterar código.
+/**
+ * Camada de comunicação com a API do backend.
+ *
+ * Todos os requests incluem `credentials: "include"` para enviar os cookies
+ * httpOnly de autenticação automaticamente.
+ *
+ * Interceptor 401:
+ *   1. Tenta renovar o access token via POST /api/auth/refresh
+ *   2. Se bem-sucedido, repete o request original
+ *   3. Se falhar, redireciona para /login
+ */
+import type {
+  AuthResponse,
+  ConfirmResponse,
+  HistoryEntry,
+  InvoiceData,
+  UploadResponse,
+  User,
+} from "./types";
 
-import type { ConfirmResponse, HistoryEntry, InvoiceData, UploadResponse } from "./types";
-
-// URL base da API — em desenvolvimento aponta para http://localhost:8000/api
 const BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000") + "/api";
 
+// ── Interceptor central ───────────────────────────────────────────────────────
 
-// Envia arquivos para o backend processar via OCR.
-// Usa FormData com múltiplos campos "files" (requisito do FastAPI para List[UploadFile]).
-// Retorna a UploadResponse com session_id + lista de NFs extraídas.
-export async function uploadInvoices(files: File[]): Promise<UploadResponse> {
-  const form = new FormData();
-  files.forEach((f) => form.append("files", f));
+let _isRefreshing = false;
+let _refreshPromise: Promise<boolean> | null = null;
 
-  const res = await fetch(`${BASE}/invoices/upload`, {
+async function _tryRefresh(): Promise<boolean> {
+  if (_isRefreshing && _refreshPromise) return _refreshPromise;
+  _isRefreshing = true;
+  _refreshPromise = fetch(`${BASE}/auth/refresh`, {
     method: "POST",
-    body: form,
-    // Não define Content-Type — o browser define automaticamente com o boundary correto para multipart
-  });
+    credentials: "include",
+  })
+    .then((r) => r.ok)
+    .catch(() => false)
+    .finally(() => {
+      _isRefreshing = false;
+      _refreshPromise = null;
+    });
+  return _refreshPromise;
+}
+
+async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const opts: RequestInit = { ...init, credentials: "include" };
+  const res = await fetch(url, opts);
+
+  if (res.status === 401) {
+    const refreshed = await _tryRefresh();
+    if (!refreshed) {
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+      throw new Error("Sessão expirada.");
+    }
+    const retry = await fetch(url, opts);
+    if (!retry.ok) {
+      const err = await retry.json().catch(() => ({ detail: retry.statusText }));
+      throw new Error(err.detail || "Erro na requisição.");
+    }
+    return retry.json() as Promise<T>;
+  }
 
   if (!res.ok) {
-    // Tenta extrair a mensagem de erro do JSON do FastAPI (campo "detail"); fallback para statusText
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Erro no upload.");
+    throw new Error(err.detail || "Erro na requisição.");
+  }
+  return res.json() as Promise<T>;
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+// Endpoints de auth usam fetch direto (sem interceptor de redirect)
+// para evitar loop infinito na verificação inicial de sessão.
+
+export async function apiLogin(email: string, password: string): Promise<AuthResponse> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Credenciais inválidas.");
   }
   return res.json();
 }
 
+export async function apiRegister(
+  name: string,
+  email: string,
+  password: string
+): Promise<AuthResponse> {
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Erro ao criar conta.");
+  }
+  return res.json();
+}
 
-// Envia as NFs revisadas pelo usuário para o backend gerar o Excel + ZIP.
-// invoices já inclui as edições manuais e o status (confirmed/skipped) de cada NF.
-// Retorna a ConfirmResponse com job_id e download_url.
+export async function apiLogout(): Promise<void> {
+  await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" });
+}
+
+export async function apiGetMe(): Promise<{ user: User }> {
+  // Sem interceptor: se não autenticado, simplesmente lança erro (AuthContext trata como user=null)
+  const res = await fetch(`${BASE}/auth/me`, { credentials: "include" });
+  if (!res.ok) throw new Error("Not authenticated");
+  return res.json();
+}
+
+// ── Invoices ──────────────────────────────────────────────────────────────────
+
+export async function uploadInvoices(files: File[]): Promise<UploadResponse> {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  return request<UploadResponse>(`${BASE}/invoices/upload`, {
+    method: "POST",
+    body: form,
+    // Sem Content-Type — browser define o boundary correto para multipart
+  });
+}
+
 export async function confirmInvoices(
   session_id: string,
   invoices: InvoiceData[]
 ): Promise<ConfirmResponse> {
-  const res = await fetch(`${BASE}/invoices/confirm`, {
+  return request<ConfirmResponse>(`${BASE}/invoices/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id, invoices }),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Erro ao confirmar invoices.");
-  }
-  return res.json();
 }
 
+// ── History ───────────────────────────────────────────────────────────────────
 
-// Busca a lista de processamentos anteriores para exibição no histórico.
-// Retorna o array de entries (paginação padrão do backend: 50 mais recentes).
 export async function fetchHistory(): Promise<HistoryEntry[]> {
-  const res = await fetch(`${BASE}/history/`);
-  if (!res.ok) throw new Error("Erro ao carregar histórico.");
-  const data = await res.json();
-  return data.entries; // o backend retorna { entries: [...], total: N }
+  const data = await request<{ entries: HistoryEntry[]; total: number }>(
+    `${BASE}/history/`
+  );
+  return data.entries;
 }
 
-
-// Remove um único registro do histórico pelo seu ID.
 export async function deleteHistoryEntry(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/history/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Erro ao excluir registro.");
+  await request(`${BASE}/history/${id}`, { method: "DELETE" });
 }
 
-
-// Remove todos os registros do histórico de uma vez.
 export async function deleteAllHistory(): Promise<void> {
-  const res = await fetch(`${BASE}/history/all`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Erro ao limpar histórico.");
+  await request(`${BASE}/history/all`, { method: "DELETE" });
 }
